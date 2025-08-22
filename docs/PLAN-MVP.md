@@ -182,11 +182,15 @@ After implementing camera infrastructure, verify the camera system works correct
 **Expected Outcome**: Stable 1 FPS camera capture with proper permissions, device selection, and optional frame saving in debug mode.
 
 ### 3. Vision Framework Integration
+I have setup some test data in `datasets/FHP/**/*.png`. These are photos of myself. 
+There are two folders: `leave-me-alone` (posture is ok) and `interruption-worthy` (posture is not ok).
+
 - [ ] 3.1 Set up VNDetectFaceLandmarksRequest and VNDetectHumanBodyPoseRequest
 - [ ] 3.2 Implement landmark extraction for ears, nose, shoulders, and chest keypoints
 - [ ] 3.3 Add confidence validation and filtering for reliable landmarks
 - [ ] 3.4 Create coordinate system conversion from Vision to geometric calculations
 - [ ] 3.5 Add --debug mode annotation output for landmarks and keypoints
+- [ ] 3.6 Implement evaluation framework for FHP dataset analysis
 
 **Section 3 Acceptance Tests:**
 After implementing Vision framework integration, verify landmark detection works properly:
@@ -218,11 +222,14 @@ After implementing Vision framework integration, verify landmark detection works
 **Expected Outcome**: Reliable detection of facial landmarks and body keypoints with proper confidence filtering and debug visualization.
 
 ### 4. Posture Analysis Implementation
-- [ ] 4.1 Implement Forward Head Posture angle calculation using ear-to-vertical
-- [ ] 4.2 Implement Rounded Shoulders distance using body pose shoulder keypoints
-- [ ] 4.3 Implement Turtle Neck probability using head-neck-chest angle calculations
-- [ ] 4.4 Add "Can't locate chest" and similar error messages for missing keypoints
-- [ ] 4.5 Add clinical threshold validation and severity classification
+
+Ultrathink about the feature data we can extract from Section 3 and come up with 3 distinct
+approaches you would take to maximise the classification outcome. 
+
+- [ ] 4.1 Implement 3 Forward Head Posture angle calculation 
+- [ ] 4.2 Implement `make benchmark` to exercise all 3 options.
+- [ ] 4.3 Output Confusion Matrix for each option
+- [ ] 4.4 Make sure detailed outcome for each prediction results (per option per frame)
 
 **Section 4 Acceptance Tests:**
 After implementing posture analysis algorithms, verify clinical calculations work accurately:
@@ -289,3 +296,113 @@ After final integration, verify the complete MVP works as specified:
    - Verify memory usage stays stable over extended runtime
 
 **Expected Outcome**: Complete MVP delivering real-time posture analysis with clinical accuracy, proper formatting, and reliable operation.
+
+## Evaluation Framework Design
+
+### Overview
+A comprehensive evaluation system for validating Forward Head Posture (FHP) detection accuracy using the test dataset in `datasets/FHP/`. This framework enables data-driven threshold optimization and performance validation against ground truth labels.
+
+### Dataset Structure
+```
+datasets/FHP/
+├── leave-me-alone/          # Good posture samples (FHP = False)
+│   ├── image_001.png
+│   ├── image_002.png
+│   └── ...
+└── interruption-worthy/     # Bad posture samples (FHP = True)
+    ├── image_001.png
+    ├── image_002.png
+    └── ...
+```
+
+### Core Components
+
+**1. StaticImageAnalyzer.swift**
+- Reuses Vision framework pipeline from real-time system
+- Processes static PNG images instead of camera frames
+- Extracts facial landmarks and calculates FHP angles
+- Handles missing landmark scenarios gracefully
+
+**2. EvaluationRunner.swift**
+- Loads dataset with ground truth labels from folder structure
+- Processes all images through FHP analysis pipeline
+- Calculates confusion matrix and classification metrics
+- Generates detailed per-image prediction logs
+
+**3. ThresholdOptimizer.swift**
+- Tests multiple FHP angle thresholds (40°, 45°, 50°, 55°, 60°)
+- Reports accuracy, precision, recall, and F1-score for each threshold
+- Identifies optimal threshold for maximum F1-score
+- Validates against clinical research baseline (50°)
+
+### Implementation Tasks
+
+#### 3.6 Evaluation Framework Implementation
+- [ ] 3.6.1 Create StaticImageAnalyzer.swift for processing PNG files
+- [ ] 3.6.2 Implement dataset loader with folder-based ground truth parsing
+- [ ] 3.6.3 Build EvaluationRunner.swift with confusion matrix calculation
+- [ ] 3.6.4 Add ThresholdOptimizer.swift for automated threshold selection
+- [ ] 3.6.5 Create detailed logging system for per-image predictions
+- [ ] 3.6.6 Add `make eval` command to Makefile for running evaluation
+- [ ] 3.6.7 Implement performance metrics (accuracy, precision, recall, F1)
+
+### Output Specifications
+
+#### Per-Image Prediction Log
+```
+=== FHP Evaluation Results ===
+image_001.png | angle: 47.2° | confidence: 0.94 | prediction: True | ground_truth: True | ✓
+image_002.png | angle: 53.1° | confidence: 0.89 | prediction: False | ground_truth: False | ✓
+image_003.png | angle: N/A | confidence: 0.00 | prediction: False | ground_truth: True | ✗
+image_004.png | angle: 45.8° | confidence: 0.92 | prediction: True | ground_truth: True | ✓
+```
+
+#### Confusion Matrix and Metrics
+```
+=== Confusion Matrix (Threshold: 50°) ===
+                Predicted
+                False  True
+Actual False      85     12
+Actual True        8     43
+
+Accuracy: 85.3%
+Precision: 78.2%
+Recall: 84.3%
+F1-Score: 81.1%
+```
+
+#### Threshold Optimization Results
+```
+=== Threshold Analysis ===
+40°: Acc=78.4% P=72.1% R=92.2% F1=80.9%
+45°: Acc=82.7% P=75.8% R=88.2% F1=81.5%
+50°: Acc=85.3% P=78.2% R=84.3% F1=81.1% ← Clinical Baseline
+55°: Acc=87.8% P=82.4% R=78.4% F1=80.4%
+60°: Acc=84.2% P=85.7% R=68.6% F1=76.2%
+
+Optimal F1-Score: 81.5% at 45° threshold
+```
+
+### Error Handling Strategy
+
+**Missing Landmarks**: When facial landmarks cannot be detected (confidence <0.7), classify as "False" (no bad posture detected). This conservative approach avoids false positives when landmark detection fails.
+
+**Low Confidence Predictions**: Include confidence scores in evaluation but treat all predictions equally for metrics calculation. Low confidence cases are logged for analysis but not excluded from confusion matrix.
+
+**Invalid Images**: Skip corrupted or unreadable image files with warning message. Continue evaluation with remaining dataset.
+
+### Performance Requirements
+
+**Processing Speed**: Evaluation should process 100+ images in under 30 seconds
+**Memory Usage**: Maintain stable memory footprint during batch processing
+**Accuracy Target**: Aim for >80% F1-score on test dataset
+**Robustness**: Handle missing landmarks gracefully without crashes
+
+### Integration with Development Workflow
+
+1. **Continuous Validation**: Run `make eval` after posture analysis changes
+2. **Threshold Tuning**: Use evaluation results to optimize clinical thresholds
+3. **Regression Testing**: Ensure algorithm changes don't degrade performance
+4. **Dataset Expansion**: Framework supports adding more test images easily
+
+This evaluation framework provides quantitative validation of FHP detection accuracy and enables data-driven optimization of the clinical posture analysis system.
