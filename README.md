@@ -45,53 +45,12 @@ PostureKeeper implements research-validated algorithms:
 
 ## Installation
 
-### Prerequisites
-```bash
-# Install Xcode command line tools
-xcode-select --install
-
-# Verify Swift installation
-swift --version
-```
-
-### Build from Source
+### Run from Source
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/PostureKeeper.git
+git clone https://github.com/alexdong/PostureKeeper.git
 cd PostureKeeper
-
-# Build release binary
-swift build -c release
-
-# Install system-wide (optional)
-cp .build/release/PostureKeeper /usr/local/bin/
-```
-
-## Usage
-
-### Quick Start
-```bash
-# Basic monitoring with default settings
-PostureKeeper monitor
-
-# Monitor with custom alert thresholds
-PostureKeeper monitor --fhp-threshold 45 --alert-interval 30
-```
-
-## Detection Algorithms
-
-### Forward Head Posture
-```swift
-// Craniovertebral angle calculation
-let cva = atan2(ear.y - c7.y, ear.x - c7.x) * 180 / .pi
-let isForwardHead = cva < config.fhpThreshold // Default: 50°
-```
-
-### Rounded Shoulders
-```swift
-// Acromion anterior displacement
-let shoulderProtraction = shoulder.x - plumbLine.x
-let isRounded = shoulderProtraction > config.shoulderThreshold // Default: 6.35cm
+swift run PostureKeeper
 ```
 
 ### Real-time Processing Pipeline
@@ -116,21 +75,3 @@ PostureKeeper is built on peer-reviewed research:
 - **Inter-rater Reliability**: ICC values 0.91-0.94
 - **Sensitivity/Specificity**: 85-92% agreement with physical therapy assessment
 - **Processing Speed**: 29-60 FPS real-time capability
-
-## Development
-
-### Building
-```bash
-swift build
-swift test
-swift run PostureKeeper
-```
-
-### Testing
-```bash
-# Run all tests
-swift test
-
-# Run specific test suite
-swift test --filter PostureDetectorTests
-```

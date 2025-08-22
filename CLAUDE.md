@@ -15,41 +15,14 @@ PostureKeeper is a real-time Swift CLI application that uses Vision framework an
 - **Testing**: XCTest with performance testing
 - **Documentation**: DocC for API documentation
 
-## Project Structure
-
-```
-PostureKeeper/
-├── Package.swift                          # Swift Package configuration
-├── README.md                              # Project documentation
-├── CLAUDE.md                              # This file - development guidelines
-├── LICENSE                                # MIT license
-├── Sources/
-│   └── PostureKeeper/
-│       ├── CLI/
-│       │   ├── PostureKeeperCommand.swift    # @main entry point
-│       │   ├── ConfigCommand.swift           # Configuration subcommands
-│       │   ├── CalibrationCommand.swift      # Camera calibration CLI
-│       │   ├── MonitorCommand.swift          # Real-time monitoring
-│       │   ├── ReportCommand.swift           # Analytics and reporting
-│       │   └── ExportCommand.swift           # Data export functionality
-│       ├── Detection/
-│       │   ├── PostureDetector.swift         # Core detection coordinator
-│       │   ├── AngleCalculator.swift         # Geometric angle calculations
-│       │   ├── PostureClassifier.swift       # Problem classification logic
-│       │   ├── VisionPoseProcessor.swift     # Vision framework wrapper
-│       │   └── PostureThresholds.swift       # Clinical threshold definitions
-│       ├── Camera/
-│       │   ├── CameraManager.swift           # AVFoundation session management
-│       │   ├── CameraCalibrator.swift        # Positioning and setup
-│       │   ├── FrameProcessor.swift          # Real-time frame processing
-│       │   └── CameraPermissions.swift       # Privacy and permissions
-```
-
-## Swift Coding Standards
-
 ### Code Style and Conventions
 - Follow [Swift API Design Guidelines](https://swift.org/documentation/api-design-guidelines/)
 - Use SwiftLint for consistent formatting
 - Maximum line length: 120 characters
 - Use descriptive variable and function names
 - Prefer explicit types for clarity in vision/camera code
+- Use `assert` statements with clear messages liberally to catch unexpected conditions during development. 
+- Avoid `try ... catch`
+- Extensive logging can be found for each run as `logs/YYMMDD_HHMMSS.log` for debugging and monitoring
+- During debugging, use the `grep` tool to filter log messages.
+- Commit to git frequently with clear messages to capture the evolution of the codebase. Run `make lint` and `make test` before each commit.
