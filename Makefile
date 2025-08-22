@@ -1,4 +1,4 @@
-.PHONY: build run run-debug clean dev lint test synth
+.PHONY: build run run-debug analyze eval clean dev lint test synth
 
 # Default target
 build:
@@ -11,6 +11,18 @@ run: build
 # Run with debug flag
 run-debug: build
 	swift run PostureKeeper --debug
+
+# Analyze single image (specify IMAGE=path or use latest from .output)
+analyze: build
+ifdef IMAGE
+	swift run PostureKeeper --analyze $(IMAGE)
+else
+	swift run PostureKeeper --analyze latest
+endif
+
+# Evaluate FHP detection on datasets/FHP/ with 3 approaches
+eval: build
+	swift run PostureKeeper --eval
 
 # Development workflow - build, lint, and typecheck
 dev: build

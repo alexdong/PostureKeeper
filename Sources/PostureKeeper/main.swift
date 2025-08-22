@@ -116,7 +116,7 @@ struct PostureKeeper: ParsableCommand {
         
         semaphore.wait()
         
-        if let error = cameraError {
+        if cameraError != nil {
             throw ExitCode.failure
         }
     }
