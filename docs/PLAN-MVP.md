@@ -148,11 +148,12 @@ After completing all tasks in this section, verify the foundation is working cor
 **Expected Outcome**: A functional Swift CLI foundation that builds, runs, handles arguments, and logs to timestamped files.
 
 ### 2. Camera Infrastructure
-- [ ] 2.1 Implement CameraCapture.swift class with AVCaptureSession setup
-- [ ] 2.2 Add camera device discovery and first-available selection logic
-- [ ] 2.3 Implement camera permission request and error handling
-- [ ] 2.4 Create Timer-based frame capture at 1 FPS with CVPixelBuffer output
-- [ ] 2.5 Add --debug mode to save captured frames to `./.output/` (gitignored)
+- [x] 2.1 Implement CameraCapture.swift class with AVCaptureSession setup
+- [x] 2.2 Add camera device discovery and first-available selection logic
+- [x] 2.3 Implement camera permission request and error handling
+- [x] 2.4 Create Timer-based frame capture at 1 FPS with CVPixelBuffer output
+- [x] 2.5 Add --debug mode to save captured frames to `./.output/` (gitignored)
+- [x] 2.6 Integrate camera with main application (async support)
 
 **Section 2 Acceptance Tests:**
 After implementing camera infrastructure, verify the camera system works correctly:
