@@ -85,6 +85,8 @@ class VisionProcessor {
                             "confidence": "\(jointPoint.confidence)",
                             "location": "(\(jointPoint.location.x), \(jointPoint.location.y))"
                         ])
+                    } else {
+                        logger.debug("Joint not detected", metadata: ["joint": "\(joint.rawValue)"])
                     }
                 }
             } else {
@@ -262,7 +264,7 @@ class VisionProcessor {
             do {
                 let jointPoint = try bodyPose.recognizedPoint(joint)
                 
-                if jointPoint.confidence > 0.5 {
+                if jointPoint.confidence > 0.3 {
                     let screenPoint = VNImagePointForNormalizedPoint(
                         jointPoint.location, 
                         Int(imageSize.width), 

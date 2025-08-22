@@ -6,7 +6,7 @@ import Logging
 struct DatasetResult {
     let imagePath: String
     let groundTruth: Bool  // true = FHP (interruption-worthy), false = normal (leave-me-alone)
-    let results: [FHPResult]
+    let result: FHPResult
 }
 
 struct ConfusionMatrix {
@@ -39,15 +39,11 @@ struct ConfusionMatrix {
 
 class EvaluationRunner {
     private let visionProcessor = VisionProcessor()
-    private let analyzers: [FHPAnalyzer] = [
-        DirectCVAAnalyzer(),
-        BilateralCVAAnalyzer(), 
-        ConfidenceWeightedCVAAnalyzer()
-    ]
+    private let analyzer = FHPAnalyzer()
     
     func evaluateDataset(logger: Logger) throws {
         logger.info("Starting FHP dataset evaluation")
-        print("📊 Starting FHP dataset evaluation with 3 approaches...")
+        print("📊 Starting FHP dataset evaluation with Face Aspect Ratio CVA...")
         
         // Load dataset
         let datasetResults = try loadDataset(logger: logger)
@@ -60,7 +56,7 @@ class EvaluationRunner {
         print("\n📈 EVALUATION RESULTS")
         print("====================")
         
-        // Process each image through all analyzers
+        // Process each image through FHP analyzer
         print("\n🔍 Processing images...")
         var results: [DatasetResult] = []
         
@@ -72,13 +68,12 @@ class EvaluationRunner {
                 results.append(processedResult)
                 
                 // Show quick result
-                let validResults = processedResult.results.compactMap { $0.angle != nil ? $0 : nil }
-                if !validResults.isEmpty {
-                    let predictions = validResults.map { $0.classification ? "FHP" : "Normal" }
+                if processedResult.result.angle != nil {
+                    let prediction = processedResult.result.classification ? "FHP" : "Normal"
                     let groundTruthStr = processedResult.groundTruth ? "FHP" : "Normal"
-                    print("  Ground Truth: \(groundTruthStr) | Predictions: \(predictions.joined(separator: ", "))")
+                    print("  Ground Truth: \(groundTruthStr) | Prediction: \(prediction)")
                 } else {
-                    print("  ❌ No valid predictions (insufficient landmarks)")
+                    print("  ❌ No valid prediction (insufficient landmarks)")
                 }
                 
             } catch {
@@ -89,19 +84,17 @@ class EvaluationRunner {
                 print("  ❌ Processing failed: \(error.localizedDescription)")
                 
                 // Create failed result
-                let failedResults = analyzers.map { analyzer in
-                    FHPResult(
-                        angle: nil,
-                        confidence: 0.0,
-                        classification: false,
-                        debugInfo: ["error": error.localizedDescription],
-                        analyzerName: analyzer.name
-                    )
-                }
+                let failedResult = FHPResult(
+                    angle: nil,
+                    confidence: 0.0,
+                    classification: false,
+                    debugInfo: ["error": error.localizedDescription],
+                    analyzerName: analyzer.name
+                )
                 results.append(DatasetResult(
                     imagePath: item.imagePath,
                     groundTruth: item.groundTruth,
-                    results: failedResults
+                    result: failedResult
                 ))
             }
         }
@@ -111,22 +104,19 @@ class EvaluationRunner {
         print("==================")
         generateDetailedResults(results: results, logger: logger)
         
-        // Generate confusion matrices for each analyzer
-        print("\n📊 CONFUSION MATRICES")
-        print("=====================")
-        for (index, analyzer) in analyzers.enumerated() {
-            print("\n--- \(analyzer.name) ---")
-            let confusionMatrix = calculateConfusionMatrix(results: results, analyzerIndex: index)
-            printConfusionMatrix(confusionMatrix, analyzerName: analyzer.name)
-            
-            logger.info("Confusion matrix calculated", metadata: [
-                "analyzer": "\(analyzer.name)",
-                "accuracy": "\(confusionMatrix.accuracy)",
-                "precision": "\(confusionMatrix.precision)",
-                "recall": "\(confusionMatrix.recall)",
-                "f1_score": "\(confusionMatrix.f1Score)"
-            ])
-        }
+        // Generate confusion matrix
+        print("\n📊 CONFUSION MATRIX")
+        print("===================")
+        let confusionMatrix = calculateConfusionMatrix(results: results)
+        printConfusionMatrix(confusionMatrix, analyzerName: analyzer.name)
+        
+        logger.info("Confusion matrix calculated", metadata: [
+            "analyzer": "\(analyzer.name)",
+            "accuracy": "\(confusionMatrix.accuracy)",
+            "precision": "\(confusionMatrix.precision)",
+            "recall": "\(confusionMatrix.recall)",
+            "f1_score": "\(confusionMatrix.f1Score)"
+        ])
         
         print("\n✅ Dataset evaluation complete!")
         logger.info("Dataset evaluation completed", metadata: ["total_processed": "\(results.count)"])
@@ -210,17 +200,13 @@ class EvaluationRunner {
         // Process with Vision framework
         let (landmarks, _) = try visionProcessor.processImage(cgImage)
         
-        // Run all analyzers
-        var results: [FHPResult] = []
-        for analyzer in analyzers {
-            let result = analyzer.analyzeFHP(landmarks: landmarks, logger: logger)
-            results.append(result)
-        }
+        // Run FHP analyzer
+        let result = analyzer.analyzeFHP(landmarks: landmarks, logger: logger)
         
         return DatasetResult(
             imagePath: item.imagePath,
             groundTruth: item.groundTruth,
-            results: results
+            result: result
         )
     }
     
@@ -240,54 +226,47 @@ class EvaluationRunner {
     
     private func generateDetailedResults(results: [DatasetResult], logger: Logger) {
         print("=== FHP Evaluation Results ===")
-        print("Image                     | GT    | D-CVA  | B-CVA  | CW-CVA | Status")
-        print("--------------------------|-------|--------|--------|--------|--------")
+        print("Image                     | GT    | Prediction | Angle  | Confidence | Status")
+        print("--------------------------|-------|------------|--------|------------|--------")
         
         for result in results {
             let filename = URL(fileURLWithPath: result.imagePath).lastPathComponent
             let truncatedName = String(filename.prefix(24)).padding(toLength: 24, withPad: " ", startingAt: 0)
             let gtStr = result.groundTruth ? "FHP  " : "Normal"
             
-            // Get predictions from each analyzer
-            let predictions = result.results.map { fhpResult -> String in
-                if fhpResult.angle != nil {
-                    return fhpResult.classification ? "FHP" : "Norm"
-                } else {
-                    return "N/A"
-                }
-            }
-            
-            // Check if any valid prediction matches ground truth
-            let validPredictions = result.results.compactMap { result -> Bool? in
-                guard result.angle != nil else { return nil }
-                return result.classification
-            }
-            
+            // Get prediction
+            let prediction: String
+            let angleStr: String
+            let confidenceStr: String
             let status: String
-            if validPredictions.isEmpty {
-                status = "❌ N/A"
+            
+            if let angle = result.result.angle {
+                prediction = result.result.classification ? "FHP   " : "Normal"
+                angleStr = String(format: "%.1f°", angle).padding(toLength: 6, withPad: " ", startingAt: 0)
+                confidenceStr = String(format: "%.0f%%", result.result.confidence * 100).padding(toLength: 10, withPad: " ", startingAt: 0)
+                status = result.result.classification == result.groundTruth ? "✅ OK" : "❌ ERR"
             } else {
-                let correctPredictions = validPredictions.filter { $0 == result.groundTruth }.count
-                status = correctPredictions > validPredictions.count / 2 ? "✅ OK" : "❌ ERR"
+                prediction = "N/A   "
+                angleStr = "N/A   "
+                confidenceStr = "N/A       "
+                status = "❌ N/A"
             }
             
-            print("\(truncatedName) | \(gtStr) | \(predictions[0].padding(toLength: 6, withPad: " ", startingAt: 0)) | \(predictions[1].padding(toLength: 6, withPad: " ", startingAt: 0)) | \(predictions[2].padding(toLength: 6, withPad: " ", startingAt: 0)) | \(status)")
+            print("\(truncatedName) | \(gtStr) | \(prediction) | \(angleStr) | \(confidenceStr) | \(status)")
         }
     }
     
-    private func calculateConfusionMatrix(results: [DatasetResult], analyzerIndex: Int) -> ConfusionMatrix {
+    private func calculateConfusionMatrix(results: [DatasetResult]) -> ConfusionMatrix {
         var truePositive = 0
         var falsePositive = 0
         var trueNegative = 0
         var falseNegative = 0
         
         for result in results {
-            let fhpResult = result.results[analyzerIndex]
-            
             // Skip if no valid prediction
-            guard fhpResult.angle != nil else { continue }
+            guard result.result.angle != nil else { continue }
             
-            let prediction = fhpResult.classification
+            let prediction = result.result.classification
             let groundTruth = result.groundTruth
             
             switch (prediction, groundTruth) {

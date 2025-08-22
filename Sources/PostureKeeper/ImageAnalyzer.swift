@@ -6,11 +6,7 @@ import Logging
 
 class ImageAnalyzer {
     private let visionProcessor = VisionProcessor()
-    private let analyzers: [FHPAnalyzer] = [
-        DirectCVAAnalyzer(),
-        BilateralCVAAnalyzer(),
-        ConfidenceWeightedCVAAnalyzer()
-    ]
+    private let analyzer = FHPAnalyzer()
     
     func processImage(path: String, logger: Logger) throws {
         logger.info("Starting single image analysis", metadata: ["path": "\(path)"])
@@ -35,77 +31,55 @@ class ImageAnalyzer {
         let annotatedPath = try saveAnnotatedImage(annotatedImage, originalPath: imagePath, logger: logger)
         print("🎨 Annotated image saved: \(annotatedPath)")
         
-        // Run all FHP analyzers
-        print("\n📐 Running 3 FHP analysis approaches...")
-        var results: [FHPResult] = []
+        // Run FHP analysis
+        print("\n📐 Running Forward Head Posture analysis...")
+        let result = analyzer.analyzeFHP(landmarks: landmarks, logger: logger)
         
-        for (index, analyzer) in analyzers.enumerated() {
-            print("\n--- Approach \(index + 1): \(analyzer.name) ---")
-            let result = analyzer.analyzeFHP(landmarks: landmarks, logger: logger)
-            results.append(result)
-            
-            // Display results
-            if let angle = result.angle {
-                let status = result.classification ? "⚠️ FHP DETECTED" : "✅ NORMAL"
-                print("CVA Angle: \(String(format: "%.1f", angle))° | Confidence: \(String(format: "%.1f", result.confidence * 100))% | \(status)")
-            } else {
-                print("❌ Analysis failed - insufficient landmarks")
-            }
-            
-            // Log detailed debug info
-            logger.info("FHP analysis result", metadata: [
-                "analyzer": "\(analyzer.name)",
-                "angle": result.angle.map { "\($0)" } ?? "nil",
-                "confidence": "\(result.confidence)",
-                "classification": "\(result.classification)"
-            ])
-            
-            if logger.logLevel <= .debug {
-                for (key, value) in result.debugInfo {
-                    logger.debug("Debug info", metadata: ["key": "\(key)", "value": "\(value)"])
-                }
-            }
-        }
-        
-        // Summary comparison
-        print("\n📊 ANALYSIS SUMMARY")
-        print("==================")
-        let validResults = results.compactMap { result -> (String, Double, Bool, Double)? in
-            guard let angle = result.angle else { return nil }
-            return (result.analyzerName, angle, result.classification, result.confidence)
-        }
-        
-        if !validResults.isEmpty {
-            print("Method                    | Angle  | Classification | Confidence")
-            print("--------------------------|--------|----------------|------------")
-            for (name, angle, classification, confidence) in validResults {
-                let nameFormatted = String(name.prefix(24)).padding(toLength: 24, withPad: " ", startingAt: 0)
-                let angleFormatted = String(format: "%.1f°", angle).padding(toLength: 6, withPad: " ", startingAt: 0)
-                let classificationFormatted = (classification ? "FHP" : "Normal").padding(toLength: 14, withPad: " ", startingAt: 0)
-                let confidenceFormatted = String(format: "%.1f%%", confidence * 100)
-                
-                print("\(nameFormatted) | \(angleFormatted) | \(classificationFormatted) | \(confidenceFormatted)")
-            }
-            
-            // Calculate consensus
-            let fhpCount = validResults.filter { $0.2 }.count
-            let consensus = fhpCount > validResults.count / 2
-            print("\nCONSENSUS: \(consensus ? "⚠️ Forward Head Posture Detected" : "✅ Normal Posture") (\(fhpCount)/\(validResults.count) methods agree)")
-            
-            // Average angle (for valid results)
-            let averageAngle = validResults.map { $0.1 }.reduce(0, +) / Double(validResults.count)
-            print("Average CVA: \(String(format: "%.1f", averageAngle))°")
-            
-            logger.info("Image analysis completed", metadata: [
-                "valid_results": "\(validResults.count)",
-                "consensus": consensus ? "FHP" : "NORMAL"
-            ])
-            
+        // Display result
+        if let angle = result.angle {
+            let status = result.classification ? "⚠️ FHP DETECTED" : "✅ NORMAL"
+            print("FHP: \(String(format: "%.1f", angle))° (\(String(format: "%.0f", result.confidence * 100))%) | \(status)")
         } else {
-            print("❌ No valid analysis results - insufficient landmarks detected")
+            print("❌ Analysis failed - insufficient landmarks")
+        }
+        
+        // Log detailed debug info
+        logger.info("FHP analysis result", metadata: [
+            "analyzer": "\(result.analyzerName)",
+            "angle": result.angle.map { "\($0)" } ?? "nil",
+            "confidence": "\(result.confidence)",
+            "classification": "\(result.classification)"
+        ])
+        
+        if logger.logLevel <= .debug {
+            for (key, value) in result.debugInfo {
+                logger.debug("Debug info", metadata: ["key": "\(key)", "value": "\(value)"])
+            }
+        }
+        
+        // Final summary
+        if let angle = result.angle {
+            let status = result.classification ? "⚠️ Forward Head Posture Detected" : "✅ Normal Posture"
+            print("\n📊 FINAL RESULT")
+            print("===============")
+            print("Status: \(status)")
+            print("CVA Angle: \(String(format: "%.1f", angle))°")
+            print("Confidence: \(String(format: "%.0f", result.confidence * 100))%")
+            print("Method: \(result.analyzerName)")
+            
             logger.info("Image analysis completed", metadata: [
-                "valid_results": "0",
-                "consensus": "NO_DATA"
+                "status": result.classification ? "FHP" : "NORMAL",
+                "angle": "\(angle)",
+                "confidence": "\(result.confidence)"
+            ])
+        } else {
+            print("\n❌ ANALYSIS FAILED")
+            print("==================")
+            print("Insufficient face landmarks detected")
+            
+            logger.info("Image analysis completed", metadata: [
+                "status": "FAILED",
+                "reason": "insufficient_landmarks"
             ])
         }
         
