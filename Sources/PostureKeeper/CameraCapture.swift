@@ -11,7 +11,7 @@ class CameraCapture: NSObject {
     private var currentDevice: AVCaptureDevice?
     
     private let outputQueue = DispatchQueue(label: "camera.output.queue")
-    private var frameTimer: Timer?
+    private var frameTimer: DispatchSourceTimer?
     private var latestPixelBuffer: CVPixelBuffer?
     
     var frameHandler: ((CVPixelBuffer) -> Void)?
@@ -191,27 +191,33 @@ class CameraCapture: NSObject {
     
     private func startFrameTimer() {
         logger.info("Starting 1 FPS frame timer")
-        frameTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+        timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        timer.setEventHandler { [weak self] in
             self?.processLatestFrame()
         }
+        timer.resume()
+        frameTimer = timer
     }
     
     private func stopFrameTimer() {
         logger.info("Stopping frame timer")
-        frameTimer?.invalidate()
+        frameTimer?.cancel()
         frameTimer = nil
     }
     
     private func processLatestFrame() {
+        logger.info("Timer fired - attempting to process frame")
         guard let pixelBuffer = latestPixelBuffer else {
-            logger.debug("No frame available for processing")
+            logger.warning("No frame available for processing - latestPixelBuffer is nil")
             return
         }
         
-        logger.debug("Processing frame at 1 FPS")
+        logger.info("Processing frame at 1 FPS")
         
         // Save frame to disk if in debug mode
         if debugMode {
+            logger.info("Debug mode enabled - saving frame to disk")
             saveFrameToDebugOutput(pixelBuffer)
         }
         
@@ -267,17 +273,25 @@ class CameraCapture: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 extension CameraCapture: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        logger.info("🎥 Received camera frame from delegate!")
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            logger.debug("Failed to get pixel buffer from sample")
+            logger.error("Failed to get pixel buffer from sample")
             return
         }
         
+        logger.info("✅ Successfully extracted pixel buffer from frame")
         // Store latest frame for 1 FPS processing
         latestPixelBuffer = pixelBuffer
+        
+        // For testing - save frame immediately if in debug mode
+        if debugMode {
+            logger.info("🚀 Debug mode: Saving frame immediately")
+            saveFrameToDebugOutput(pixelBuffer)
+        }
     }
     
     func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        logger.debug("Dropped camera frame")
+        logger.warning("⚠️ Dropped camera frame")
     }
 }
 
