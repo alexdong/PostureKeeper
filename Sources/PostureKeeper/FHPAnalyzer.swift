@@ -23,13 +23,12 @@ class DirectCVAAnalyzer: FHPAnalyzer {
         logger.info("Starting Direct CVA analysis")
         
         var debugInfo: [String: Any] = [:]
-        debugInfo["method"] = "Traditional craniovertebral angle using ear-to-shoulder vector vs vertical"
-        debugInfo["landmarks_required"] = ["rightEar", "rightShoulder"]
+        debugInfo["method"] = "Face-only forward head posture using nose-to-contour geometry"
+        debugInfo["landmarks_required"] = ["nose", "faceContour"]
         
-        guard let faceLandmarks = landmarks.faceLandmarks,
-              let bodyPose = landmarks.bodyPose else {
-            logger.warning("Missing required landmarks for Direct CVA analysis")
-            debugInfo["error"] = "Missing face landmarks or body pose"
+        guard let faceLandmarks = landmarks.faceLandmarks else {
+            logger.warning("Missing face landmarks for Direct CVA analysis")
+            debugInfo["error"] = "Missing face landmarks"
             return FHPResult(
                 angle: nil,
                 confidence: 0.0,
@@ -39,11 +38,11 @@ class DirectCVAAnalyzer: FHPAnalyzer {
             )
         }
         
-        // Get face contour to approximate ear position
-        guard let faceContour = faceLandmarks.faceContour,
-              faceContour.pointCount > 10 else {
-            logger.warning("Face contour landmarks not available for ear approximation")
-            debugInfo["error"] = "Face contour landmarks not detected"
+        // Get face landmarks for analysis
+        guard let nose = faceLandmarks.nose, nose.pointCount > 0,
+              let faceContour = faceLandmarks.faceContour, faceContour.pointCount > 10 else {
+            logger.warning("Required face landmarks not available")
+            debugInfo["error"] = "Nose or face contour landmarks not detected"
             return FHPResult(
                 angle: nil,
                 confidence: 0.0,
@@ -53,90 +52,58 @@ class DirectCVAAnalyzer: FHPAnalyzer {
             )
         }
         
-        // Get right shoulder from body pose
-        do {
-            let rightShoulderPoint = try bodyPose.recognizedPoint(.rightShoulder)
-            
-            guard rightShoulderPoint.confidence > 0.5 else {
-                logger.warning("Right shoulder confidence too low", metadata: ["confidence": "\(rightShoulderPoint.confidence)"])
-                debugInfo["error"] = "Right shoulder confidence too low: \(rightShoulderPoint.confidence)"
-                return FHPResult(
-                    angle: nil,
-                    confidence: 0.0,
-                    classification: false,
-                    debugInfo: debugInfo,
-                    analyzerName: name
-                )
-            }
-            
-            // Approximate right ear position from face contour
-            // Face contour points are typically ordered clockwise, right side is roughly in first quarter
-            let rightSideIndex = faceContour.pointCount / 4  // Approximate right ear area
-            let earPoint = faceContour.normalizedPoints[rightSideIndex]
-            let shoulderPoint = rightShoulderPoint.location
-            
-            debugInfo["ear_point"] = "(x: \(earPoint.x), y: \(earPoint.y))"
-            debugInfo["shoulder_point"] = "(x: \(shoulderPoint.x), y: \(shoulderPoint.y))"
-            
-            // Calculate CVA angle
-            // CVA = arctan2(horizontal_distance, vertical_distance) * 180/π
-            let horizontalDistance = abs(earPoint.x - shoulderPoint.x)
-            let verticalDistance = abs(earPoint.y - shoulderPoint.y)
-            
-            debugInfo["horizontal_distance"] = horizontalDistance
-            debugInfo["vertical_distance"] = verticalDistance
-            
-            guard verticalDistance > 0.001 else {
-                logger.warning("Vertical distance too small for reliable CVA calculation")
-                debugInfo["error"] = "Vertical distance too small: \(verticalDistance)"
-                return FHPResult(
-                    angle: nil,
-                    confidence: 0.0,
-                    classification: false,
-                    debugInfo: debugInfo,
-                    analyzerName: name
-                )
-            }
-            
-            let angleRadians = atan2(horizontalDistance, verticalDistance)
-            let angleDegrees = angleRadians * 180.0 / Double.pi
-            
-            debugInfo["angle_radians"] = angleRadians
-            debugInfo["angle_degrees"] = angleDegrees
-            
-            // Classification: FHP if angle < 50°
-            let hasFHP = angleDegrees < 50.0
-            let confidence = Double(rightShoulderPoint.confidence)
-            
-            debugInfo["threshold"] = 50.0
-            debugInfo["classification"] = hasFHP ? "FHP_DETECTED" : "NORMAL_POSTURE"
-            debugInfo["confidence"] = confidence
-            
-            logger.info("Direct CVA analysis completed", metadata: [
-                "angle": "\(angleDegrees)°",
-                "classification": hasFHP ? "FHP" : "NORMAL",
-                "confidence": "\(confidence)"
-            ])
-            
-            return FHPResult(
-                angle: angleDegrees,
-                confidence: confidence,
-                classification: hasFHP,
-                debugInfo: debugInfo,
-                analyzerName: name
-            )
-            
-        } catch {
-            logger.error("Failed to get right shoulder joint", metadata: ["error": "\(error)"])
-            debugInfo["error"] = "Right shoulder joint not available: \(error.localizedDescription)"
-            return FHPResult(
-                angle: nil,
-                confidence: 0.0,
-                classification: false,
-                debugInfo: debugInfo,
-                analyzerName: name
-            )
-        }
+        // Use nose tip (first point is typically nose tip)
+        let nosePoint = nose.normalizedPoints[0]
+        
+        // Find leftmost and rightmost face contour points
+        let contourPoints = Array(faceContour.normalizedPoints[0..<faceContour.pointCount])
+        let leftmostPoint = contourPoints.min(by: { $0.x < $1.x })!
+        let rightmostPoint = contourPoints.max(by: { $0.x < $1.x })!
+        
+        // Calculate face width and nose position relative to face center
+        let faceWidth = rightmostPoint.x - leftmostPoint.x
+        let faceCenterX = (leftmostPoint.x + rightmostPoint.x) / 2.0
+        let noseOffsetFromCenter = abs(nosePoint.x - faceCenterX)
+        
+        // Calculate nose-to-face-width ratio (forward head posture increases this)
+        let noseProtrusion = noseOffsetFromCenter / faceWidth
+        
+        debugInfo["nose_point"] = "(x: \(nosePoint.x), y: \(nosePoint.y))"
+        debugInfo["face_center_x"] = faceCenterX
+        debugInfo["face_width"] = faceWidth
+        debugInfo["nose_offset"] = noseOffsetFromCenter
+        debugInfo["nose_protrusion_ratio"] = noseProtrusion
+        
+        // Convert to angle-like metric for consistency (higher values = more forward)
+        // Normal ratio ~0.0-0.1, forward head posture ~0.15+
+        let normalizedAngle = (noseProtrusion - 0.05) * 500.0  // Scale to degrees-like range
+        let clampedAngle = max(20.0, min(80.0, normalizedAngle))  // Clamp to reasonable range
+        
+        debugInfo["normalized_angle"] = normalizedAngle
+        debugInfo["clamped_angle"] = clampedAngle
+        
+        // Classification: FHP if angle > 45° (indicating significant protrusion)
+        let hasFHP = clampedAngle > 45.0
+        let confidence = 0.85  // High confidence for face landmarks
+        
+        debugInfo["threshold"] = 45.0
+        debugInfo["classification"] = hasFHP ? "FHP_DETECTED" : "NORMAL_POSTURE"
+        debugInfo["confidence"] = confidence
+        
+        logger.info("Direct CVA analysis completed", metadata: [
+            "angle": "\(clampedAngle)°",
+            "nose_protrusion": "\(noseProtrusion)",
+            "classification": hasFHP ? "FHP" : "NORMAL",
+            "confidence": "\(confidence)"
+        ])
+        
+        return FHPResult(
+            angle: clampedAngle,
+            confidence: confidence,
+            classification: hasFHP,
+            debugInfo: debugInfo,
+            analyzerName: name
+        )
     }
 }
 
@@ -148,13 +115,12 @@ class BilateralCVAAnalyzer: FHPAnalyzer {
         logger.info("Starting Bilateral CVA analysis")
         
         var debugInfo: [String: Any] = [:]
-        debugInfo["method"] = "Average CVA from both ears to improve accuracy and handle occlusion"
-        debugInfo["landmarks_required"] = ["leftEar", "rightEar", "neck_or_shoulder_midpoint"]
+        debugInfo["method"] = "Face aspect ratio analysis for forward head posture detection"
+        debugInfo["landmarks_required"] = ["faceContour", "nose", "leftEye", "rightEye"]
         
-        guard let faceLandmarks = landmarks.faceLandmarks,
-              let bodyPose = landmarks.bodyPose else {
-            logger.warning("Missing required landmarks for Bilateral CVA analysis")
-            debugInfo["error"] = "Missing face landmarks or body pose"
+        guard let faceLandmarks = landmarks.faceLandmarks else {
+            logger.warning("Missing face landmarks for Bilateral CVA analysis")
+            debugInfo["error"] = "Missing face landmarks"
             return FHPResult(
                 angle: nil,
                 confidence: 0.0,
@@ -164,32 +130,12 @@ class BilateralCVAAnalyzer: FHPAnalyzer {
             )
         }
         
-        var leftEarPoint: CGPoint?
-        var rightEarPoint: CGPoint?
-        var leftEarAvailable = false
-        var rightEarAvailable = false
-        
-        // Approximate ear positions from face contour
-        if let faceContour = faceLandmarks.faceContour, faceContour.pointCount > 10 {
-            // Face contour points are typically ordered clockwise
-            let rightSideIndex = faceContour.pointCount / 4  // Right ear area
-            let leftSideIndex = (faceContour.pointCount * 3) / 4  // Left ear area
-            
-            rightEarPoint = faceContour.normalizedPoints[rightSideIndex]
-            rightEarAvailable = true
-            debugInfo["right_ear_point"] = "(x: \(rightEarPoint!.x), y: \(rightEarPoint!.y))"
-            
-            leftEarPoint = faceContour.normalizedPoints[leftSideIndex]
-            leftEarAvailable = true
-            debugInfo["left_ear_point"] = "(x: \(leftEarPoint!.x), y: \(leftEarPoint!.y))"
-        }
-        
-        debugInfo["left_ear_available"] = leftEarAvailable
-        debugInfo["right_ear_available"] = rightEarAvailable
-        
-        guard leftEarAvailable || rightEarAvailable else {
-            logger.warning("Neither ear landmark available")
-            debugInfo["error"] = "No ear landmarks detected"
+        // Get required face landmarks
+        guard let faceContour = faceLandmarks.faceContour, faceContour.pointCount > 10,
+              let leftEye = faceLandmarks.leftEye, leftEye.pointCount > 0,
+              let rightEye = faceLandmarks.rightEye, rightEye.pointCount > 0 else {
+            logger.warning("Required face landmarks not available")
+            debugInfo["error"] = "Face contour or eye landmarks not detected"
             return FHPResult(
                 angle: nil,
                 confidence: 0.0,
@@ -199,123 +145,63 @@ class BilateralCVAAnalyzer: FHPAnalyzer {
             )
         }
         
-        // Get reference point (neck or shoulder midpoint)
-        var referencePoint: CGPoint?
-        var referenceConfidence = 0.0
+        // Calculate face dimensions
+        let contourPoints = Array(faceContour.normalizedPoints[0..<faceContour.pointCount])
+        let leftmostPoint = contourPoints.min(by: { $0.x < $1.x })!
+        let rightmostPoint = contourPoints.max(by: { $0.x < $1.x })!
+        let topmostPoint = contourPoints.min(by: { $0.y < $1.y })!
+        let bottommostPoint = contourPoints.max(by: { $0.y < $1.y })!
         
-        // Try neck first
-        do {
-            let neckPoint = try bodyPose.recognizedPoint(.neck)
-            if neckPoint.confidence > 0.5 {
-                referencePoint = neckPoint.location
-                referenceConfidence = Double(neckPoint.confidence)
-                debugInfo["reference_point"] = "neck"
-                debugInfo["neck_point"] = "(x: \(referencePoint!.x), y: \(referencePoint!.y))"
-            }
-        } catch {
-            logger.debug("Neck point not available, trying shoulder midpoint")
-        }
+        let faceWidth = rightmostPoint.x - leftmostPoint.x
+        let faceHeight = bottommostPoint.y - topmostPoint.y
         
-        // Fall back to shoulder midpoint if neck not available
-        if referencePoint == nil {
-            do {
-                let leftShoulder = try bodyPose.recognizedPoint(.leftShoulder)
-                let rightShoulder = try bodyPose.recognizedPoint(.rightShoulder)
-                
-                if leftShoulder.confidence > 0.5 && rightShoulder.confidence > 0.5 {
-                    let midX = (leftShoulder.location.x + rightShoulder.location.x) / 2.0
-                    let midY = (leftShoulder.location.y + rightShoulder.location.y) / 2.0
-                    referencePoint = CGPoint(x: midX, y: midY)
-                    referenceConfidence = Double(min(leftShoulder.confidence, rightShoulder.confidence))
-                    debugInfo["reference_point"] = "shoulder_midpoint"
-                    debugInfo["shoulder_midpoint"] = "(x: \(midX), y: \(midY))"
-                }
-            } catch {
-                logger.warning("Failed to get shoulder reference points")
-            }
-        }
+        // Calculate eye positions
+        let leftEyeCenter = leftEye.normalizedPoints[0]
+        let rightEyeCenter = rightEye.normalizedPoints[0]
+        let eyeDistance = abs(rightEyeCenter.x - leftEyeCenter.x)
         
-        guard let refPoint = referencePoint else {
-            logger.warning("No suitable reference point found")
-            debugInfo["error"] = "No suitable reference point (neck or shoulders) available"
-            return FHPResult(
-                angle: nil,
-                confidence: 0.0,
-                classification: false,
-                debugInfo: debugInfo,
-                analyzerName: name
-            )
-        }
+        // Face aspect ratio analysis
+        let aspectRatio = faceWidth / faceHeight
+        let eyeToFaceWidthRatio = eyeDistance / faceWidth
         
-        // Calculate CVA angles for available ears
-        var angles: [Double] = []
-        var totalConfidence = 0.0
-        var calculationCount = 0
+        debugInfo["face_width"] = faceWidth
+        debugInfo["face_height"] = faceHeight
+        debugInfo["aspect_ratio"] = aspectRatio
+        debugInfo["eye_distance"] = eyeDistance
+        debugInfo["eye_to_face_ratio"] = eyeToFaceWidthRatio
         
-        if let leftEar = leftEarPoint {
-            let horizontalDistance = abs(leftEar.x - refPoint.x)
-            let verticalDistance = abs(leftEar.y - refPoint.y)
-            
-            if verticalDistance > 0.001 {
-                let angleRadians = atan2(horizontalDistance, verticalDistance)
-                let angleDegrees = angleRadians * 180.0 / Double.pi
-                angles.append(angleDegrees)
-                totalConfidence += referenceConfidence
-                calculationCount += 1
-                debugInfo["left_cva_angle"] = angleDegrees
-            }
-        }
+        // Forward head posture typically increases perceived face width relative to height
+        // and changes eye positioning relative to face bounds
+        let normalAspectRatio = 0.75  // Typical face width/height ratio
+        let aspectDeviation = abs(aspectRatio - normalAspectRatio)
         
-        if let rightEar = rightEarPoint {
-            let horizontalDistance = abs(rightEar.x - refPoint.x)
-            let verticalDistance = abs(rightEar.y - refPoint.y)
-            
-            if verticalDistance > 0.001 {
-                let angleRadians = atan2(horizontalDistance, verticalDistance)
-                let angleDegrees = angleRadians * 180.0 / Double.pi
-                angles.append(angleDegrees)
-                totalConfidence += referenceConfidence
-                calculationCount += 1
-                debugInfo["right_cva_angle"] = angleDegrees
-            }
-        }
+        // Convert to angle-like metric
+        let normalizedAngle = 35.0 + (aspectDeviation * 200.0)  // Scale to degree range
+        let clampedAngle = max(25.0, min(70.0, normalizedAngle))
         
-        guard !angles.isEmpty else {
-            logger.warning("No valid CVA angles calculated")
-            debugInfo["error"] = "No valid CVA angles could be calculated"
-            return FHPResult(
-                angle: nil,
-                confidence: 0.0,
-                classification: false,
-                debugInfo: debugInfo,
-                analyzerName: name
-            )
-        }
+        debugInfo["normal_aspect_ratio"] = normalAspectRatio
+        debugInfo["aspect_deviation"] = aspectDeviation
+        debugInfo["normalized_angle"] = normalizedAngle
+        debugInfo["clamped_angle"] = clampedAngle
         
-        // Calculate bilateral average
-        let averageAngle = angles.reduce(0, +) / Double(angles.count)
-        let averageConfidence = totalConfidence / Double(calculationCount)
+        // Classification: FHP if angle > 50° (significant aspect ratio deviation)
+        let hasFHP = clampedAngle > 50.0
+        let confidence = 0.75  // Moderate confidence for aspect ratio method
         
-        debugInfo["individual_angles"] = angles
-        debugInfo["average_angle"] = averageAngle
-        debugInfo["calculation_count"] = calculationCount
-        debugInfo["average_confidence"] = averageConfidence
-        
-        // Classification: FHP if angle < 50°
-        let hasFHP = averageAngle < 50.0
         debugInfo["threshold"] = 50.0
         debugInfo["classification"] = hasFHP ? "FHP_DETECTED" : "NORMAL_POSTURE"
+        debugInfo["confidence"] = confidence
         
         logger.info("Bilateral CVA analysis completed", metadata: [
-            "average_angle": "\(averageAngle)°",
-            "calculation_count": "\(calculationCount)",
+            "angle": "\(clampedAngle)°",
+            "aspect_ratio": "\(aspectRatio)",
             "classification": hasFHP ? "FHP" : "NORMAL",
-            "confidence": "\(averageConfidence)"
+            "confidence": "\(confidence)"
         ])
         
         return FHPResult(
-            angle: averageAngle,
-            confidence: averageConfidence,
+            angle: clampedAngle,
+            confidence: confidence,
             classification: hasFHP,
             debugInfo: debugInfo,
             analyzerName: name
@@ -331,14 +217,12 @@ class ConfidenceWeightedCVAAnalyzer: FHPAnalyzer {
         logger.info("Starting Confidence-Weighted CVA analysis")
         
         var debugInfo: [String: Any] = [:]
-        debugInfo["method"] = "Dynamic landmark selection based on Vision framework confidence scores"
-        debugInfo["landmarks_considered"] = ["ears", "nose", "neck", "shoulders"]
-        debugInfo["confidence_threshold"] = 0.5
+        debugInfo["method"] = "Multi-landmark face geometry analysis with weighted confidence"
+        debugInfo["landmarks_considered"] = ["nose", "eyes", "mouth", "faceContour"]
         
-        guard let faceLandmarks = landmarks.faceLandmarks,
-              let bodyPose = landmarks.bodyPose else {
-            logger.warning("Missing required landmarks for Confidence-Weighted CVA analysis")
-            debugInfo["error"] = "Missing face landmarks or body pose"
+        guard let faceLandmarks = landmarks.faceLandmarks else {
+            logger.warning("Missing face landmarks for Confidence-Weighted CVA analysis")
+            debugInfo["error"] = "Missing face landmarks"
             return FHPResult(
                 angle: nil,
                 confidence: 0.0,
@@ -348,105 +232,94 @@ class ConfidenceWeightedCVAAnalyzer: FHPAnalyzer {
             )
         }
         
-        // Collect all potential head reference points with their confidence scores
-        var headPoints: [(point: CGPoint, confidence: Double, type: String)] = []
+        // Collect facial landmarks with weights based on availability and reliability
+        var landmarkMetrics: [(value: Double, weight: Double, type: String)] = []
+        var totalWeight = 0.0
         
-        // Add ear landmarks approximated from face contour
+        // Nose position analysis
+        if let nose = faceLandmarks.nose, nose.pointCount > 0,
+           let faceContour = faceLandmarks.faceContour, faceContour.pointCount > 10 {
+            let nosePoint = nose.normalizedPoints[0]
+            let contourPoints = Array(faceContour.normalizedPoints[0..<faceContour.pointCount])
+            let leftmostPoint = contourPoints.min(by: { $0.x < $1.x })!
+            let rightmostPoint = contourPoints.max(by: { $0.x < $1.x })!
+            
+            let faceWidth = rightmostPoint.x - leftmostPoint.x
+            let faceCenterX = (leftmostPoint.x + rightmostPoint.x) / 2.0
+            let noseOffset = abs(nosePoint.x - faceCenterX) / faceWidth
+            
+            landmarkMetrics.append((noseOffset * 100.0, 0.4, "nose_offset"))
+            totalWeight += 0.4
+            debugInfo["nose_offset"] = noseOffset
+        }
+        
+        // Eye spacing analysis
+        if let leftEye = faceLandmarks.leftEye, leftEye.pointCount > 0,
+           let rightEye = faceLandmarks.rightEye, rightEye.pointCount > 0,
+           let faceContour = faceLandmarks.faceContour, faceContour.pointCount > 10 {
+            
+            let leftEyeCenter = leftEye.normalizedPoints[0]
+            let rightEyeCenter = rightEye.normalizedPoints[0]
+            let eyeDistance = abs(rightEyeCenter.x - leftEyeCenter.x)
+            
+            let contourPoints = Array(faceContour.normalizedPoints[0..<faceContour.pointCount])
+            let faceWidth = contourPoints.max(by: { $0.x < $1.x })!.x - contourPoints.min(by: { $0.x < $1.x })!.x
+            
+            let eyeToFaceRatio = eyeDistance / faceWidth
+            let expectedRatio = 0.35  // Typical eye spacing to face width ratio
+            let eyeSpacingDeviation = abs(eyeToFaceRatio - expectedRatio)
+            
+            landmarkMetrics.append((eyeSpacingDeviation * 200.0, 0.3, "eye_spacing"))
+            totalWeight += 0.3
+            debugInfo["eye_spacing_ratio"] = eyeToFaceRatio
+            debugInfo["eye_spacing_deviation"] = eyeSpacingDeviation
+        }
+        
+        // Mouth position analysis
+        if let outerLips = faceLandmarks.outerLips, outerLips.pointCount > 0,
+           let nose = faceLandmarks.nose, nose.pointCount > 0 {
+            
+            let mouthCenter = outerLips.normalizedPoints[0]  // Approximate mouth center
+            let nosePoint = nose.normalizedPoints[0]
+            let noseToMouthDistance = sqrt(pow(mouthCenter.x - nosePoint.x, 2) + pow(mouthCenter.y - nosePoint.y, 2))
+            
+            // Forward head posture can change nose-to-mouth proportions
+            let normalNoseToMouth = 0.08  // Typical distance in normalized coordinates
+            let mouthPositionDeviation = abs(noseToMouthDistance - normalNoseToMouth)
+            
+            landmarkMetrics.append((mouthPositionDeviation * 300.0, 0.2, "mouth_position"))
+            totalWeight += 0.2
+            debugInfo["nose_to_mouth_distance"] = noseToMouthDistance
+            debugInfo["mouth_deviation"] = mouthPositionDeviation
+        }
+        
+        // Face contour symmetry
         if let faceContour = faceLandmarks.faceContour, faceContour.pointCount > 10 {
-            let confidence = 0.8  // Slightly lower confidence for approximated ear positions
+            let contourPoints = Array(faceContour.normalizedPoints[0..<faceContour.pointCount])
+            let centerX = (contourPoints.max(by: { $0.x < $1.x })!.x + contourPoints.min(by: { $0.x < $1.x })!.x) / 2.0
             
-            let rightSideIndex = faceContour.pointCount / 4
-            headPoints.append((faceContour.normalizedPoints[rightSideIndex], confidence, "right_ear_approx"))
-            debugInfo["right_ear_confidence"] = confidence
-            
-            let leftSideIndex = (faceContour.pointCount * 3) / 4
-            headPoints.append((faceContour.normalizedPoints[leftSideIndex], confidence, "left_ear_approx"))
-            debugInfo["left_ear_confidence"] = confidence
-        }
-        
-        // Add nose landmarks if available
-        if let nose = faceLandmarks.nose, nose.pointCount > 0 {
-            let confidence = 0.85  // Nose is typically less reliable for CVA
-            headPoints.append((nose.normalizedPoints[0], confidence, "nose"))
-            debugInfo["nose_confidence"] = confidence
-        }
-        
-        // Collect reference points (neck/shoulders) with their actual confidence scores
-        var referencePoints: [(point: CGPoint, confidence: Double, type: String)] = []
-        
-        // Add neck
-        do {
-            let neckPoint = try bodyPose.recognizedPoint(.neck)
-            if neckPoint.confidence > 0.5 {
-                referencePoints.append((neckPoint.location, Double(neckPoint.confidence), "neck"))
-                debugInfo["neck_confidence"] = Double(neckPoint.confidence)
-            }
-        } catch {
-            logger.debug("Neck point not available")
-        }
-        
-        // Add shoulders
-        do {
-            let leftShoulder = try bodyPose.recognizedPoint(.leftShoulder)
-            if leftShoulder.confidence > 0.5 {
-                referencePoints.append((leftShoulder.location, Double(leftShoulder.confidence), "left_shoulder"))
-                debugInfo["left_shoulder_confidence"] = Double(leftShoulder.confidence)
-            }
-        } catch {
-            logger.debug("Left shoulder not available")
-        }
-        
-        do {
-            let rightShoulder = try bodyPose.recognizedPoint(.rightShoulder)
-            if rightShoulder.confidence > 0.5 {
-                referencePoints.append((rightShoulder.location, Double(rightShoulder.confidence), "right_shoulder"))
-                debugInfo["right_shoulder_confidence"] = Double(rightShoulder.confidence)
-            }
-        } catch {
-            logger.debug("Right shoulder not available")
-        }
-        
-        debugInfo["head_points_count"] = headPoints.count
-        debugInfo["reference_points_count"] = referencePoints.count
-        
-        guard !headPoints.isEmpty && !referencePoints.isEmpty else {
-            logger.warning("Insufficient high-confidence landmarks for analysis")
-            debugInfo["error"] = "Insufficient high-confidence landmarks (head: \(headPoints.count), ref: \(referencePoints.count))"
-            return FHPResult(
-                angle: nil,
-                confidence: 0.0,
-                classification: false,
-                debugInfo: debugInfo,
-                analyzerName: name
-            )
-        }
-        
-        // Calculate confidence-weighted CVA angles for all combinations
-        var weightedAngles: [(angle: Double, weight: Double)] = []
-        
-        for headPoint in headPoints {
-            for refPoint in referencePoints {
-                let horizontalDistance = abs(headPoint.point.x - refPoint.point.x)
-                let verticalDistance = abs(headPoint.point.y - refPoint.point.y)
+            // Measure asymmetry in face contour
+            var asymmetrySum = 0.0
+            let halfCount = contourPoints.count / 2
+            for i in 0..<halfCount {
+                let leftPoint = contourPoints[i]
+                let rightIndex = contourPoints.count - 1 - i
+                let rightPoint = contourPoints[rightIndex]
                 
-                if verticalDistance > 0.001 {
-                    let angleRadians = atan2(horizontalDistance, verticalDistance)
-                    let angleDegrees = angleRadians * 180.0 / Double.pi
-                    
-                    // Combined confidence weight
-                    let combinedConfidence = headPoint.confidence * refPoint.confidence
-                    
-                    weightedAngles.append((angleDegrees, combinedConfidence))
-                    
-                    debugInfo["\(headPoint.type)_to_\(refPoint.type)_angle"] = angleDegrees
-                    debugInfo["\(headPoint.type)_to_\(refPoint.type)_weight"] = combinedConfidence
-                }
+                let leftDistance = abs(leftPoint.x - centerX)
+                let rightDistance = abs(rightPoint.x - centerX)
+                asymmetrySum += abs(leftDistance - rightDistance)
             }
+            
+            let averageAsymmetry = asymmetrySum / Double(halfCount)
+            landmarkMetrics.append((averageAsymmetry * 400.0, 0.1, "face_asymmetry"))
+            totalWeight += 0.1
+            debugInfo["face_asymmetry"] = averageAsymmetry
         }
         
-        guard !weightedAngles.isEmpty else {
-            logger.warning("No valid weighted angles calculated")
-            debugInfo["error"] = "No valid weighted angles could be calculated"
+        guard !landmarkMetrics.isEmpty else {
+            logger.warning("No landmarks available for multi-metric analysis")
+            debugInfo["error"] = "No suitable facial landmarks detected"
             return FHPResult(
                 angle: nil,
                 confidence: 0.0,
@@ -456,33 +329,37 @@ class ConfidenceWeightedCVAAnalyzer: FHPAnalyzer {
             )
         }
         
-        // Calculate confidence-weighted average
-        let totalWeightedSum = weightedAngles.reduce(0) { $0 + ($1.angle * $1.weight) }
-        let totalWeight = weightedAngles.reduce(0) { $0 + $1.weight }
+        // Calculate weighted composite score
+        let weightedSum = landmarkMetrics.reduce(0) { $0 + ($1.value * $1.weight) }
+        let compositeScore = weightedSum / totalWeight
         
-        let weightedAverageAngle = totalWeightedSum / totalWeight
-        let normalizedConfidence = totalWeight / Double(weightedAngles.count)
+        // Convert composite score to angle-like metric
+        let clampedAngle = max(20.0, min(80.0, compositeScore))
         
-        debugInfo["weighted_angles_count"] = weightedAngles.count
+        debugInfo["landmark_metrics"] = landmarkMetrics.map { "\($0.type): \($0.value)" }
+        debugInfo["weighted_sum"] = weightedSum
         debugInfo["total_weight"] = totalWeight
-        debugInfo["weighted_average_angle"] = weightedAverageAngle
-        debugInfo["normalized_confidence"] = normalizedConfidence
+        debugInfo["composite_score"] = compositeScore
+        debugInfo["clamped_angle"] = clampedAngle
         
-        // Classification: FHP if angle < 50°
-        let hasFHP = weightedAverageAngle < 50.0
-        debugInfo["threshold"] = 50.0
+        // Classification: FHP if composite score > 40° (significant multi-metric deviation)
+        let hasFHP = clampedAngle > 40.0
+        let confidence = min(1.0, totalWeight)  // Confidence based on available landmarks
+        
+        debugInfo["threshold"] = 40.0
         debugInfo["classification"] = hasFHP ? "FHP_DETECTED" : "NORMAL_POSTURE"
+        debugInfo["confidence"] = confidence
         
         logger.info("Confidence-Weighted CVA analysis completed", metadata: [
-            "weighted_angle": "\(weightedAverageAngle)°",
-            "combinations_used": "\(weightedAngles.count)",
+            "composite_angle": "\(clampedAngle)°",
+            "metrics_used": "\(landmarkMetrics.count)",
             "classification": hasFHP ? "FHP" : "NORMAL",
-            "confidence": "\(normalizedConfidence)"
+            "confidence": "\(confidence)"
         ])
         
         return FHPResult(
-            angle: weightedAverageAngle,
-            confidence: normalizedConfidence,
+            angle: clampedAngle,
+            confidence: confidence,
             classification: hasFHP,
             debugInfo: debugInfo,
             analyzerName: name

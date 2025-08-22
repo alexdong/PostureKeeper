@@ -153,8 +153,8 @@ class EvaluationRunner {
             logger.warning("Normal posture directory not found", metadata: ["path": "\(normalPath)"])
         }
         
-        // Load FHP images (interruption-worthy = true)
-        let fhpPath = "\(datasetPath)/interruption-worthy"
+        // Load FHP images (interrupt-worthy = true)  
+        let fhpPath = "\(datasetPath)/interrupt-worthy"
         if fileManager.fileExists(atPath: fhpPath) {
             let fhpImages = try loadImagesFromDirectory(fhpPath, groundTruth: true, logger: logger)
             results.append(contentsOf: fhpImages)
