@@ -1,4 +1,7 @@
-logs/
+# PostureKeeper specific
+.logs/
+.output/
+.build/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
