@@ -27,14 +27,59 @@ struct PostureKeeper: ParsableCommand {
             logger.info("Normal mode - real-time analysis only")
         }
         
-        print("Camera infrastructure implemented but async integration pending")
-        print("All camera components ready: CameraCapture.swift with:")
-        print("  ✓ AVFoundation session management")
-        print("  ✓ Device discovery and selection")
-        print("  ✓ Permission handling")
-        print("  ✓ 1 FPS timer-based capture") 
-        print("  ✓ Debug mode frame saving")
-        logger.info("Camera infrastructure complete - async integration needed for full operation")
+        // Initialize camera
+        let camera = CameraCapture()
+        camera.debugMode = debug
+        camera.frameHandler = { pixelBuffer in
+            logger.debug("Received frame for processing")
+            if debug {
+                print("📸 Frame captured and saved to .output/")
+            } else {
+                print("📸 Frame captured - analysis not yet implemented")
+            }
+        }
+        
+        // Use async task wrapper with run loop
+        let semaphore = DispatchSemaphore(value: 0)
+        var cameraError: Error?
+        
+        Task {
+            do {
+                print("🔐 Requesting camera permissions...")
+                try await camera.setupSession()
+                camera.startSession()
+                
+                print("📹 Camera started! Capturing frames at 1 FPS...")
+                if debug {
+                    print("💾 Debug mode: Frames being saved to ./.output/ directory")
+                }
+                print("Press Ctrl+C to stop")
+                logger.info("Camera session active")
+                
+                // Keep the main thread alive to process timer events
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+                        continuation.resume()
+                    }
+                }
+                
+            } catch {
+                logger.error("Camera setup failed", metadata: ["error": "\(error)"])
+                print("❌ Error: \(error.localizedDescription)")
+                cameraError = error
+            }
+            
+            camera.stopSession()
+            print("📱 Camera stopped")
+            logger.info("Application exiting normally")
+            semaphore.signal()
+        }
+        
+        semaphore.wait()
+        
+        if let error = cameraError {
+            throw ExitCode.failure
+        }
     }
 }
 
