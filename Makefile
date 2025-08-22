@@ -1,4 +1,4 @@
-.PHONY: build run run-debug clean dev lint test
+.PHONY: build run run-debug clean dev lint test synth
 
 # Default target
 build:
@@ -28,3 +28,15 @@ lint:
 # Test (placeholder for future tests)
 test:
 	@echo "Tests not yet configured"
+
+# Generate synthetic training data
+# Usage: make synth NUM=10  (generates 10 images)
+# Usage: make synth         (runs continuously until stopped)
+synth:
+ifdef NUM
+	@echo "Generating $(NUM) synthetic training images..."
+	@python tools/synth.py --num-images $(NUM) --output-dir datasets/synthetic
+else
+	@echo "Starting continuous synthetic data generation (Ctrl+C to stop)..."
+	@python tools/synth.py --continuous --output-dir datasets/synthetic
+endif
