@@ -2,6 +2,8 @@ import ArgumentParser
 import Foundation
 import Logging
 
+// MARK: - Logging Setup
+
 struct FileLogHandler: LogHandler {
     private let fileURL: URL
     private let formatter: DateFormatter
@@ -59,7 +61,8 @@ func setupLogging() -> Logger {
     return Logger(label: "PostureKeeper")
 }
 
-@main
+// MARK: - Main Application
+
 struct PostureKeeper: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "PostureKeeper",
@@ -85,11 +88,10 @@ struct PostureKeeper: ParsableCommand {
             logger.info("Normal mode - real-time analysis only")
         }
         
-        print("Press Ctrl+C to exit")
-        logger.info("Application initialized successfully")
-        
-        // For now, just exit - camera and analysis will be added in later tasks
-        print("MVP implementation not yet complete - exiting")
-        logger.info("Application exiting - MVP implementation incomplete")
+        print("Camera setup not yet implemented - exiting")
+        logger.info("Application exiting - camera implementation incomplete")
     }
 }
+
+// Entry point
+PostureKeeper.main()
