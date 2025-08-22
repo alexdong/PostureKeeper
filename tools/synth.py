@@ -65,6 +65,13 @@ except ImportError:
     print("pip install diffusers torch pillow accelerate transformers")
     exit(1)
 
+# Optional: BitsAndBytes for quantization
+try:
+    import bitsandbytes as bnb
+    HAS_BITSANDBYTES = True
+except ImportError:
+    HAS_BITSANDBYTES = False
+
 
 class PostureDataGenerator:
     """Generates synthetic posture training data using Stable Diffusion."""
@@ -77,29 +84,29 @@ class PostureDataGenerator:
     HAIR_STYLES = ["short hair", "long hair", "bald", "curly hair", "straight hair", "braided hair", "ponytail", "hair in a bun", "buzz cut"]
     GLASSES = ["wearing glasses", "without glasses", "with thick-framed glasses", "wearing reading glasses", ""]
     
-    # Posture descriptions
+    # Posture descriptions - concise for token limit
     POSTURE_SEVERE = [
-        "severe forward head posture with chin jutting forward",
-        "extreme neck crane toward screen with head far forward",
-        "pronounced turtle neck posture with compressed cervical spine",
-        "severe text neck with head tilted down at sharp angle",
-        "extreme forward head position with craniovertebral angle less than 45 degrees"
+        "severe forward head posture looking at screen",
+        "extreme neck crane toward monitor",
+        "pronounced turtle neck at computer",
+        "severe text neck viewing display",
+        "head far forward staring at screen"
     ]
     
     POSTURE_MODERATE = [
-        "moderate forward head posture",
-        "noticeable head forward of shoulders",
-        "mild turtle neck with head pushed forward",
-        "some neck strain with forward positioning",
-        "craniovertebral angle around 50 degrees"
+        "moderate forward head looking at screen",
+        "head forward of shoulders viewing monitor",
+        "mild turtle neck toward display",
+        "slight neck strain at computer",
+        "forward lean watching screen"
     ]
     
     POSTURE_NORMAL = [
-        "good upright posture with head aligned over shoulders",
-        "proper ergonomic sitting position",
-        "neutral spine alignment with head balanced",
-        "healthy posture with ears aligned over shoulders",
-        "correct craniovertebral angle over 55 degrees"
+        "good upright posture at monitor",
+        "proper ergonomic position viewing screen",
+        "neutral spine looking at display",
+        "healthy posture at computer",
+        "aligned posture watching screen"
     ]
     
     # Environmental settings
@@ -111,13 +118,26 @@ class PostureDataGenerator:
     CLOTHING = ["wearing a t-shirt", "in a hoodie", "wearing a button-up shirt", "in a sweater", "wearing casual clothes", "in work attire"]
     COLORS = ["black", "white", "blue", "gray", "navy", "dark colored", "light colored"]
     
-    # Activities
-    ACTIVITIES = ["at computer", "at desk", "working", "in video call", "at workstation"]
-    EXPRESSIONS = ["neutral expression", "natural look", "relaxed face", "casual expression", "normal expression"]
+    # Activities - concise for token limit
+    ACTIVITIES = ["looking at computer screen", "focused on monitor", "working at screen", "viewing display", "staring at monitor", "eyes on screen", "watching computer"]
+    EXPRESSIONS = ["focused forward", "concentrated gaze", "attentive look", "eyes forward", "looking straight"]
     
-    def __init__(self, model_id: str = "stabilityai/stable-diffusion-xl-base-1.0", device: Optional[str] = None):
-        """Initialize the generator with a specific model."""
+    def __init__(self, model_id: str = "black-forest-labs/FLUX.1-dev", device: Optional[str] = None, use_quantization: bool = False):
+        """Initialize the generator with a specific model.
+        
+        Recommended models for photorealistic humans (best to worst):
+        - black-forest-labs/FLUX.1-dev (best quality, slower - 16GB+ VRAM, 12GB with Q8)
+        - stabilityai/stable-diffusion-3-medium-diffusers (excellent, 8GB+ VRAM)
+        - SG161222/RealVisXL_V4.0 (photorealistic SDXL, 8GB VRAM)
+        - stabilityai/stable-diffusion-xl-base-1.0 (default, fast)
+        
+        Args:
+            model_id: HuggingFace model ID
+            device: Device to use (cuda/mps/cpu)
+            use_quantization: Enable 8-bit quantization for FLUX (requires bitsandbytes)
+        """
         self.model_id = model_id
+        self.use_quantization = use_quantization
         
         # Detect device
         if device:
@@ -126,29 +146,100 @@ class PostureDataGenerator:
             self.device = "cuda"
         elif torch.backends.mps.is_available():
             self.device = "mps"
+            print("Note: MPS (Apple Silicon) detected. Some models may run slower than expected.")
         else:
             self.device = "cpu"
-            print("WARNING: Running on CPU will be slow. GPU recommended.")
+            print("WARNING: Running on CPU will be very slow. GPU strongly recommended.")
         
         print(f"Using device: {self.device}")
         
-        # Check if SDXL model
-        self.is_sdxl = "sdxl" in model_id.lower()
+        # Check model type
+        self.is_sdxl = "sdxl" in model_id.lower() or "realvis" in model_id.lower()
         self.is_turbo = "turbo" in model_id.lower()
         self.is_lightning = "lightning" in model_id.lower()
+        self.is_flux = "flux" in model_id.lower()
+        self.is_sd3 = "stable-diffusion-3" in model_id.lower()
         
         # Initialize pipeline
         print(f"Loading model {model_id}...")
         
         # Import appropriate pipeline
-        if self.is_sdxl:
-            from diffusers import AutoPipelineForText2Image
-            self.pipe = AutoPipelineForText2Image.from_pretrained(
-                model_id,
-                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
-                variant="fp16" if self.device != "cpu" else None,
-                use_safetensors=True
-            )
+        if self.is_flux:
+            from diffusers import FluxPipeline
+            
+            # Check if quantization is requested and available
+            if self.use_quantization and self.device == "cuda":
+                if not HAS_BITSANDBYTES:
+                    print("WARNING: Quantization requested but bitsandbytes not installed.")
+                    print("Install with: pip install bitsandbytes")
+                    print("Falling back to fp16...")
+                    self.use_quantization = False
+                else:
+                    print("Using 8-bit quantization for FLUX (reduces VRAM usage)")
+            
+            if self.device != "cpu":
+                if self.use_quantization and HAS_BITSANDBYTES:
+                    # Load with 8-bit quantization using bitsandbytes
+                    # This reduces memory from ~16GB to ~12GB
+                    from transformers import BitsAndBytesConfig
+                    
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        bnb_8bit_compute_dtype=torch.bfloat16
+                    )
+                    
+                    # Load FLUX with transformer quantized
+                    self.pipe = FluxPipeline.from_pretrained(
+                        model_id,
+                        transformer_quantization_config=quantization_config,
+                        torch_dtype=torch.bfloat16,
+                        use_safetensors=True,
+                        device_map="balanced"
+                    )
+                else:
+                    # Standard loading
+                    self.pipe = FluxPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float16,
+                        use_safetensors=True
+                    )
+            else:
+                self.pipe = FluxPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float32,
+                    use_safetensors=True
+                )
+        elif self.is_sd3:
+            from diffusers import StableDiffusion3Pipeline
+            if self.device != "cpu":
+                self.pipe = StableDiffusion3Pipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True
+                )
+            else:
+                self.pipe = StableDiffusion3Pipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float32,
+                    use_safetensors=True
+                )
+        elif self.is_sdxl:
+            from diffusers import DiffusionPipeline
+            if self.device != "cpu":
+                self.pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                    variant="fp16" if "base" in model_id.lower() else None,
+                    add_watermarker=False
+                )
+            else:
+                self.pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float32,
+                    use_safetensors=True,
+                    add_watermarker=False
+                )
         else:
             self.pipe = StableDiffusionPipeline.from_pretrained(
                 model_id,
@@ -159,27 +250,52 @@ class PostureDataGenerator:
             # Use faster scheduler for SD1.5
             self.pipe.scheduler = DPMSolverMultistepScheduler.from_config(self.pipe.scheduler.config)
         
-        # Memory optimizations for 8GB cards
+        # Memory optimizations
         if self.device == "cuda":
-            self.pipe.enable_model_cpu_offload()  # Crucial for 8GB VRAM
-            self.pipe.enable_vae_slicing()        # Reduces VAE memory
-            self.pipe.enable_vae_tiling()         # Further VAE optimization
-            if hasattr(self.pipe, 'enable_attention_slicing'):
-                self.pipe.enable_attention_slicing()
-            
-            # SDXL specific optimizations
-            if self.is_sdxl and hasattr(self.pipe.unet, 'to'):
-                self.pipe.unet.to(memory_format=torch.channels_last)
+            # FLUX needs more memory, use aggressive offloading
+            if self.is_flux:
+                # Skip CPU offloading if using quantization (they conflict)
+                if not self.use_quantization:
+                    self.pipe.enable_model_cpu_offload()
+                if hasattr(self.pipe, 'enable_vae_slicing'):
+                    self.pipe.enable_vae_slicing()
+            # SD3 also benefits from offloading
+            elif self.is_sd3:
+                self.pipe.enable_model_cpu_offload()
+                if hasattr(self.pipe, 'enable_vae_slicing'):
+                    self.pipe.enable_vae_slicing()
+                if hasattr(self.pipe, 'enable_vae_tiling'):
+                    self.pipe.enable_vae_tiling()
+            # Standard optimizations for SDXL and others
+            else:
+                self.pipe.enable_model_cpu_offload()  # Crucial for 8GB VRAM
+                if hasattr(self.pipe, 'enable_vae_slicing'):
+                    self.pipe.enable_vae_slicing()        # Reduces VAE memory
+                if hasattr(self.pipe, 'enable_vae_tiling'):
+                    self.pipe.enable_vae_tiling()         # Further VAE optimization
+                if hasattr(self.pipe, 'enable_attention_slicing'):
+                    self.pipe.enable_attention_slicing()
+                
+                # SDXL specific optimizations
+                if self.is_sdxl and hasattr(self.pipe.unet, 'to'):
+                    self.pipe.unet.to(memory_format=torch.channels_last)
         elif self.device == "mps":
             self.pipe = self.pipe.to(self.device)
-            self.pipe.enable_attention_slicing()
+            if hasattr(self.pipe, 'enable_attention_slicing'):
+                self.pipe.enable_attention_slicing()
         else:
             self.pipe = self.pipe.to(self.device)
         
         print("Model loaded successfully!")
         
         # Calculate and display time estimates
-        if self.is_turbo or self.is_lightning:
+        if self.is_flux:
+            self.steps = 28  # FLUX works best with 20-50 steps
+            time_per_image = 30  # seconds - FLUX is slower but much higher quality
+        elif self.is_sd3:
+            self.steps = 28  # SD3 recommended steps
+            time_per_image = 20  # seconds
+        elif self.is_turbo or self.is_lightning:
             self.steps = 2
             time_per_image = 2  # seconds
         elif self.is_sdxl:
@@ -192,7 +308,7 @@ class PostureDataGenerator:
         print(f"Estimated generation speed: ~{time_per_image}s per image")
         print(f"1000 images will take approximately {time_per_image * 1000 / 3600:.1f} hours")
     
-    def generate_prompt(self, posture_type: str) -> Tuple[str, Dict]:
+    def generate_prompt(self, posture_type: str) -> Tuple[str, str, Dict]:
         """Generate a random prompt with metadata for posture type."""
         
         # Select posture severity
@@ -227,25 +343,45 @@ class PostureDataGenerator:
         activity = random.choice(self.ACTIVITIES)
         expression = random.choice(self.EXPRESSIONS)
         
-        # Construct prompt
-        prompt_parts = [
-            f"Webcam selfie photo of {age} {ethnicity} {gender}",
-            f"{build} with {hair}",
-            glasses,
-            f"{clothing} in {color}",
-            posture_desc,
-            activity,
-            expression,
-            f"with {lighting}",
-            f"heavily blurred {background} background with bokeh",
-            camera,
-            "head and shoulders portrait, shallow depth of field, realistic webcam quality"
-        ]
-        
-        prompt = ", ".join(filter(None, prompt_parts))
-        
-        # Negative prompt to avoid unwanted elements
-        negative_prompt = "cartoon, anime, drawing, sketch, painting, artistic, blurry face, low quality, distorted face, extra limbs, bad anatomy, full body, wide shot, zoomed out, multiple people, profile view"
+        # Construct prompt - FLUX and SD3 handle longer, more detailed prompts better
+        if self.model_id and ("flux" in self.model_id.lower() or "sd3" in self.model_id.lower()):
+            # Detailed prompt for FLUX/SD3 - they follow instructions better with specificity
+            prompt_parts = [
+                f"A photorealistic webcam photograph of a {age} {ethnicity} {gender}",
+                f"sitting at a desk {posture_desc}",
+                f"The person has {hair}" if hair else "",
+                glasses if glasses else "",
+                f"wearing {color} {clothing}" if clothing and color else "",
+                f"The person is {activity} with a {expression}",
+                f"Shot from a {camera}, showing upper body and head",
+                f"Indoor setting with {lighting} and a softly {background} in the background",
+                "High quality, sharp focus on the person, natural skin tones",
+                "Realistic office or home workspace environment"
+            ]
+            
+            prompt = ". ".join(filter(None, prompt_parts))
+            
+            # More comprehensive negative prompt for better quality
+            negative_prompt = ("cartoon, anime, illustration, painting, drawing, art, sketch, 3d render, "
+                             "blurry, out of focus, distorted face, deformed, ugly, mutated, disfigured, "
+                             "profile view, looking away from camera, eyes closed, looking down, looking up, "
+                             "multiple people, cropped head, cut off, bad anatomy, worst quality, low quality")
+        else:
+            # Original concise prompt for SDXL/SD1.5 (token limit considerations)
+            prompt_parts = [
+                f"Webcam photo of {ethnicity} {gender} working in front of a computer or laptop",
+                hair,
+                glasses,
+                posture_desc,
+                activity,
+                f"{lighting}, blurred background",
+                "portrait, looking more or less straight at the screen"
+            ]
+            
+            prompt = ", ".join(filter(None, prompt_parts))
+            
+            # Concise negative prompt for token limit
+            negative_prompt = "cartoon, anime, blurry, distorted, profile view, looking away, looking sideways, eyes closed, looking down, looking up"
         
         metadata = {
             "posture_type": posture_type,
@@ -293,7 +429,15 @@ class PostureDataGenerator:
             generator = torch.Generator(device="cuda" if self.device == "cuda" else "cpu").manual_seed(seed)
         
         # Adjust parameters based on model type
-        if self.is_turbo:
+        if self.is_flux:
+            # FLUX specific settings for best quality
+            guidance_scale = 3.5  # FLUX works best with low guidance
+            num_inference_steps = self.steps
+        elif self.is_sd3:
+            # SD3 specific settings
+            guidance_scale = 7.0  # SD3 standard guidance
+            num_inference_steps = self.steps
+        elif self.is_turbo:
             # SDXL-Turbo specific settings
             guidance_scale = 0.0  # Turbo doesn't use CFG
             num_inference_steps = self.steps
@@ -305,20 +449,31 @@ class PostureDataGenerator:
             num_inference_steps = self.steps
         
         # Use portrait aspect ratio to match webcam framing
-        if self.is_sdxl:
+        if self.is_flux:
+            height, width = 1024, 768  # FLUX supports high resolution
+        elif self.is_sd3:
+            height, width = 1024, 768  # SD3 also supports high resolution
+        elif self.is_sdxl:
             height, width = 1024, 768  # 4:3 aspect ratio for SDXL
         else:
             height, width = 512, 384  # 4:3 aspect ratio for SD1.5
         
-        image = self.pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt if guidance_scale > 0 else None,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-            height=height,
-            width=width
-        ).images[0]
+        # Build pipeline arguments
+        pipe_kwargs = {
+            "prompt": prompt,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "generator": generator,
+            "height": height,
+            "width": width
+        }
+        
+        # Add negative prompt only if guidance scale > 0
+        if guidance_scale > 0 and negative_prompt:
+            pipe_kwargs["negative_prompt"] = negative_prompt
+        
+        # Generate image based on pipeline type
+        image = self.pipe(**pipe_kwargs).images[0]
         
         return image, seed
     
@@ -327,9 +482,9 @@ class PostureDataGenerator:
         
         if distribution is None:
             distribution = {
-                "interrupt-worthy": 0.4,  # 40% severe posture
-                "borderline": 0.2,        # 20% borderline cases
-                "leave-me-alone": 0.4      # 40% good posture
+                "interrupt-worthy": 0.33,  # 40% severe posture
+                "borderline": 0.33,        # 20% borderline cases
+                "leave-me-alone": 0.33     # 40% good posture
             }
         
         output_dir = Path(output_dir)
@@ -405,7 +560,9 @@ class PostureDataGenerator:
                         print(f"Generated {i + 1}/{num_images} images...")
                 
             except Exception as e:
+                import traceback
                 print(f"Error generating image {i}: {e}")
+                print(f"Traceback: {traceback.format_exc()}")
                 continue
         
         print(f"\nDataset generation {'stopped' if interrupted else 'complete'}! Generated {len(annotations)} images.")
@@ -423,12 +580,25 @@ class PostureDataGenerator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate synthetic posture training data")
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic posture training data",
+        epilog="""
+Model recommendations:
+  --model black-forest-labs/FLUX.1-dev          # Best quality, 16GB+ VRAM, ~30s/image
+  --model black-forest-labs/FLUX.1-dev --quantize  # With Q8: 12GB VRAM, ~35s/image
+  --model stabilityai/stable-diffusion-3-medium-diffusers  # Excellent, 8GB+ VRAM, ~20s/image
+  --model SG161222/RealVisXL_V4.0              # Photorealistic, 8GB VRAM, ~12s/image
+  --model stabilityai/stable-diffusion-xl-base-1.0  # Default, fast, 8GB VRAM, ~12s/image
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--num-images", type=int, help="Number of images to generate (omit for continuous mode)")
     parser.add_argument("--continuous", action="store_true", help="Run continuously until interrupted")
     parser.add_argument("--output-dir", type=str, default="datasets/synthetic", help="Output directory")
-    parser.add_argument("--model", type=str, default="stabilityai/stable-diffusion-xl-base-1.0", help="Diffusion model to use")
+    parser.add_argument("--model", type=str, default="SG161222/RealVisXL_V4.0", 
+                       help="Diffusion model to use (default: RealVisXL for photorealistic humans)")
     parser.add_argument("--device", type=str, choices=["cuda", "mps", "cpu"], help="Device to use (auto-detect if not specified)")
+    parser.add_argument("--quantize", action="store_true", help="Use 8-bit quantization for FLUX models (reduces VRAM)")
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
     
     args = parser.parse_args()
@@ -438,7 +608,7 @@ def main():
         torch.manual_seed(args.seed)
     
     # Initialize generator
-    generator = PostureDataGenerator(model_id=args.model, device=args.device)
+    generator = PostureDataGenerator(model_id=args.model, device=args.device, use_quantization=args.quantize)
     
     # Determine mode
     if args.continuous or (args.num_images is None):
