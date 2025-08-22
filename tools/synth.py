@@ -122,7 +122,7 @@ class PostureDataGenerator:
     ACTIVITIES = ["looking at computer screen", "focused on monitor", "working at screen", "viewing display", "staring at monitor", "eyes on screen", "watching computer"]
     EXPRESSIONS = ["focused forward", "concentrated gaze", "attentive look", "eyes forward", "looking straight"]
     
-    def __init__(self, model_id: str = "black-forest-labs/FLUX.1-dev", device: Optional[str] = None, use_quantization: bool = False):
+    def __init__(self, model_id: str = "black-forest-labs/FLUX.1-dev", device: Optional[str] = None, use_quantization: bool = False, dry_run: bool = False):
         """Initialize the generator with a specific model.
         
         Recommended models for photorealistic humans (best to worst):
@@ -135,9 +135,11 @@ class PostureDataGenerator:
             model_id: HuggingFace model ID
             device: Device to use (cuda/mps/cpu)
             use_quantization: Enable 8-bit quantization for FLUX (requires bitsandbytes)
+            dry_run: If True, skip model loading for prompt generation only
         """
         self.model_id = model_id
         self.use_quantization = use_quantization
+        self.dry_run = dry_run
         
         # Detect device
         if device:
@@ -150,6 +152,17 @@ class PostureDataGenerator:
         else:
             self.device = "cpu"
             print("WARNING: Running on CPU will be very slow. GPU strongly recommended.")
+        
+        # Skip device detection and model loading in dry_run mode
+        if self.dry_run:
+            print(f"DRY RUN MODE: Skipping model loading")
+            self.is_sdxl = "sdxl" in model_id.lower() or "realvis" in model_id.lower()
+            self.is_turbo = "turbo" in model_id.lower()
+            self.is_lightning = "lightning" in model_id.lower()
+            self.is_flux = "flux" in model_id.lower()
+            self.is_sd3 = "stable-diffusion-3" in model_id.lower()
+            self.pipe = None
+            return
         
         print(f"Using device: {self.device}")
         
@@ -482,9 +495,8 @@ class PostureDataGenerator:
         
         if distribution is None:
             distribution = {
-                "interrupt-worthy": 0.33,  # 40% severe posture
-                "borderline": 0.33,        # 20% borderline cases
-                "leave-me-alone": 0.33     # 40% good posture
+                "interrupt-worthy": 0.5,  # 40% severe posture
+                "leave-me-alone": 0.5     # 40% good posture
             }
         
         output_dir = Path(output_dir)
@@ -600,12 +612,47 @@ Model recommendations:
     parser.add_argument("--device", type=str, choices=["cuda", "mps", "cpu"], help="Device to use (auto-detect if not specified)")
     parser.add_argument("--quantize", action="store_true", help="Use 8-bit quantization for FLUX models (reduces VRAM)")
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
+    parser.add_argument("--dry-run", action="store_true", help="Only generate and display prompts without creating images")
     
     args = parser.parse_args()
     
     if args.seed:
         random.seed(args.seed)
         torch.manual_seed(args.seed)
+    
+    # Handle dry-run mode
+    if args.dry_run:
+        # Initialize a minimal generator (without loading models)
+        generator = PostureDataGenerator(model_id=args.model, device=args.device, use_quantization=args.quantize, dry_run=True)
+        
+        # Generate and display prompts
+        num_samples = args.num_images if args.num_images else 5
+        print(f"\n=== DRY RUN MODE: Generating {num_samples} sample prompts ===\n")
+        
+        distribution = {
+            "interrupt-worthy": 0.33,
+            "borderline": 0.33,
+            "leave-me-alone": 0.33
+        }
+        
+        for i in range(num_samples):
+            # Select category based on distribution
+            category = random.choices(
+                list(distribution.keys()),
+                weights=list(distribution.values())
+            )[0]
+            
+            # Generate prompt and metadata
+            prompt, negative_prompt, metadata = generator.generate_prompt(category)
+            
+            print(f"--- Sample {i+1} ---")
+            print(f"Category: {category}")
+            print(f"Prompt: {prompt}")
+            print(f"Negative Prompt: {negative_prompt}")
+            print(f"Metadata: {json.dumps(metadata, indent=2)}")
+            print()
+        
+        return
     
     # Initialize generator
     generator = PostureDataGenerator(model_id=args.model, device=args.device, use_quantization=args.quantize)
