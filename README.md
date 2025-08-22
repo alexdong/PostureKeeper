@@ -27,61 +27,6 @@ PostureKeeper uses your Mac's built-in camera to detect 10 common posture proble
 | Lumbar Lordosis Loss | 65% (sitting) | **70%** | <20° curve (limited) |
 | Lower Crossed Syndrome | 40-55% | **50%** | >15° pelvic tilt (limited) |
 
-## Technical Architecture
-
-### Core Technologies
-- **Vision Framework**: `VNDetectHumanBodyPoseRequest` for real-time pose detection
-- **AVFoundation**: `AVCaptureSession` for camera input management  
-- **Core Image**: Image processing pipeline
-- **Combine**: Reactive data flow and state management
-- **Swift ArgumentParser**: Command-line interface
-- **Swift Concurrency**: Async/await for real-time processing
-
-### System Requirements
-- macOS 13.0+ (Ventura or later)
-- Built-in or external camera (HD 1080p recommended)
-- Swift 5.7+
-- Xcode 14.0+
-
-### Architecture Components
-
-```
-PostureKeeper/
-├── Sources/
-│   ├── PostureKeeper/
-│   │   ├── CLI/
-│   │   │   ├── PostureKeeperCommand.swift    # Main CLI entry point
-│   │   │   ├── ConfigCommand.swift           # Configuration management
-│   │   │   └── CalibrationCommand.swift      # Camera calibration
-│   │   ├── Detection/
-│   │   │   ├── PostureDetector.swift         # Core detection engine
-│   │   │   ├── AngleCalculator.swift         # Geometric calculations
-│   │   │   ├── PostureClassifier.swift       # Problem classification
-│   │   │   └── VisionPoseProcessor.swift     # Vision framework wrapper
-│   │   ├── Camera/
-│   │   │   ├── CameraManager.swift           # AVFoundation management
-│   │   │   ├── CameraCalibrator.swift        # Positioning optimization
-│   │   │   └── FrameProcessor.swift          # Real-time frame handling
-│   │   ├── Analytics/
-│   │   │   ├── PostureLogger.swift           # Data persistence
-│   │   │   ├── MetricsCalculator.swift       # Statistical analysis
-│   │   │   └── ReportGenerator.swift         # Health reports
-│   │   ├── Alerts/
-│   │   │   ├── AlertManager.swift            # Notification system
-│   │   │   ├── VoiceAlerts.swift             # Speech synthesis
-│   │   │   └── VisualIndicators.swift        # On-screen feedback
-│   │   └── Models/
-│   │       ├── PostureProblem.swift          # Problem definitions
-│   │       ├── PostureMetrics.swift          # Measurement data
-│   │       └── DetectionConfig.swift         # Configuration model
-├── Tests/
-│   ├── Unit/                                 # Unit tests
-│   └── Integration/                          # Integration tests
-└── Resources/
-    ├── Calibration/                          # Camera setup guides
-    └── Documentation/                        # Clinical references
-```
-
 ## Clinical Validation
 
 PostureKeeper implements research-validated algorithms:
@@ -131,63 +76,18 @@ PostureKeeper monitor
 
 # Monitor with custom alert thresholds
 PostureKeeper monitor --fhp-threshold 45 --alert-interval 30
-
-# Calibrate camera positioning
-PostureKeeper calibrate
-
-# View posture analytics
-PostureKeeper report --days 7
 ```
-
-### Configuration
-```bash
-# Set up user profile and thresholds
-PostureKeeper config setup
-
-# Customize alert preferences
-PostureKeeper config alerts --voice enabled --visual subtle
-
-# Camera positioning optimization
-PostureKeeper config camera --position auto --distance 2.5m
-```
-
-### Advanced Usage
-```bash
-# Export data for analysis
-PostureKeeper export --format csv --timerange "last 30 days"
-
-# Integration with health apps
-PostureKeeper sync --healthkit enabled
-
-# Continuous monitoring mode
-PostureKeeper daemon --background --log-level info
-```
-
-## Camera Setup Guidelines
-
-### Optimal Positioning
-- **Distance**: 2-3 meters from your workstation
-- **Height**: Mid-torso level (approximately chest height)
-- **Angle**: Slight downward tilt (10-15°) for full body capture
-- **Lighting**: Avoid backlighting, ensure even illumination
-
-### Calibration Process
-1. Run `PostureKeeper calibrate`
-2. Follow on-screen positioning guide
-3. Maintain good posture during 30-second baseline recording
-4. Adjust camera based on detection feedback
-5. Save calibration profile
 
 ## Detection Algorithms
 
-### Forward Head Posture (97% Accuracy)
+### Forward Head Posture
 ```swift
 // Craniovertebral angle calculation
 let cva = atan2(ear.y - c7.y, ear.x - c7.x) * 180 / .pi
 let isForwardHead = cva < config.fhpThreshold // Default: 50°
 ```
 
-### Rounded Shoulders (90% Accuracy)
+### Rounded Shoulders
 ```swift
 // Acromion anterior displacement
 let shoulderProtraction = shoulder.x - plumbLine.x
@@ -201,20 +101,6 @@ let isRounded = shoulderProtraction > config.shoulderThreshold // Default: 6.35c
 4. **Problem Classification**: Rule-based detection using clinical thresholds
 5. **Alert Generation**: Immediate feedback for posture violations
 6. **Data Logging**: Continuous metrics storage for analysis
-
-## Health Integration
-
-### HealthKit Sync
-- Posture score trends
-- Daily sitting time analysis  
-- Musculoskeletal risk indicators
-- Movement reminders integration
-
-### Export Formats
-- CSV for spreadsheet analysis
-- JSON for programmatic access
-- PDF reports with visualizations
-- HealthKit integration for Apple Health
 
 ## Research Foundation
 
@@ -247,28 +133,4 @@ swift test
 
 # Run specific test suite
 swift test --filter PostureDetectorTests
-
-# Performance tests
-swift test --filter PerformanceTests
 ```
-
-### Contributing
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Medical Disclaimer
-
-PostureKeeper is for educational and preventive purposes only. It is not intended to diagnose, treat, or replace professional medical advice. Consult healthcare providers for persistent musculoskeletal symptoms.
-
-## Support
-
-- [Documentation](https://github.com/yourusername/PostureKeeper/wiki)
-- [Issue Tracker](https://github.com/yourusername/PostureKeeper/issues)
-- [Discussions](https://github.com/yourusername/PostureKeeper/discussions)
